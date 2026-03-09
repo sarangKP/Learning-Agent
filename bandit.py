@@ -53,6 +53,8 @@ SAD_ALLOWED_ACTIONS = {0, 4}   # DO_NOTHING, ENABLE_PATIENCE
 _CALM_IDX = AFFECT_MAP["calm"]   # 3
 _SAD_IDX  = AFFECT_MAP["sad"]    # 2
 
+GAMMA = 0.99  # decay factor — tune this per deployment
+
 
 class UCBBandit:
     def __init__(self, N: np.ndarray, Q: np.ndarray):
@@ -63,12 +65,15 @@ class UCBBandit:
 
     # ── Update ────────────────────────────────────────────────────
 
+      
+
     def update(self, context_id: int, action_id: int, reward: float) -> None:
-        """Incremental mean update."""
-        self.N[context_id][action_id] += 1
-        n = self.N[context_id][action_id]
-        self.Q[context_id][action_id] += (1.0 / n) * (
-            reward - self.Q[context_id][action_id]
+        # Decay both tables before applying new reward
+        self.N[context_id][action_id] = (
+            GAMMA * self.N[context_id][action_id] + 1
+        )
+        self.Q[context_id][action_id] = (
+            GAMMA * self.Q[context_id][action_id] + (1 - GAMMA) * reward
         )
 
     # ── Select ────────────────────────────────────────────────────
@@ -87,7 +92,7 @@ class UCBBandit:
         """
         affect_idx = context_id // 9
         n_ctx      = self.N[context_id]
-        total      = int(self.N.sum())
+        total = self.N.sum()
 
         # ── Rule 1: calm → never touch the config ─────────────────
         if affect_idx == _CALM_IDX:
