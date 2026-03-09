@@ -1,0 +1,12 @@
+.venv/
+
+.agent/
+.agent/*
+
+.idea/
+.idea/*
+
+__pycache__/
+__pycache__/*
+
+tables/
