@@ -7,7 +7,7 @@
 ║              Conversation Agent Simulator                ║
 ╚══════════════════════════════════════════════════════════╝
   Model        : llama3.2:latest
-  Learning Svc : enabled  →  http://127.0.0.1:8000/analyse
+  Learning Svc : enabled  → /analyse
   Initial cfg  : {'pace': 'normal', 'clarity_level': 2, 'confirmation_frequency': 'low', 'patience_mode': False}
   Commands: /quit  /config  /prompt  /history
 
@@ -15,9 +15,9 @@
 
 👴 Elderly user : Hello, good morning. Who are you?
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.440   Repetition score: 0.000
@@ -27,7 +27,7 @@
   UCB scores          : [-0.08, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -38,9 +38,9 @@
 
 👴 Elderly user : Oh I see. Can you tell me what the weather is like today?
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.361   Repetition score: 0.064
@@ -50,7 +50,7 @@
   UCB scores          : [-0.07, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -61,9 +61,9 @@
 
 👴 Elderly user : That's nice. I had my tea already but I forgot if I took my tablet.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.226   Repetition score: 0.000
@@ -73,7 +73,7 @@
   UCB scores          : [-0.06, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -84,9 +84,9 @@
 
 👴 Elderly user : I take one white tablet and one blue one every morning
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.000   Repetition score: 0.035
@@ -96,7 +96,7 @@
   UCB scores          : [-0.06, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -106,9 +106,9 @@
 
 👴 Elderly user : I don't understand what you said. Can you say that again?
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CONFUSED  (80% confidence)
   ⚡ Escalation rule   : R3_all_calm_history (raw affect downgraded)
   Signals detected    : ['confusion_keywords', 'escalation:R3_all_calm_history']
@@ -123,7 +123,7 @@
                                   ↳  ELARA will use only the simplest possible words
      confirmation_frequency       low        →  medium
                                   ↳  ELARA confirms what it heard every 2nd reply
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -137,9 +137,9 @@
 
 👴 Elderly user : I already asked you about my tablet. Did I take it or not?
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CONFUSED  (60% confidence)
   Signals detected    : ['confusion_keywords']
   Sentiment score     : +0.000   Repetition score: 0.099
@@ -149,7 +149,7 @@
   UCB scores          : [99.00, 99.00, 99.00, 99.00, 99.00, 99.00, 1.67]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -160,9 +160,9 @@
 
 👴 Elderly user : You're not making sense. I can't follow what you're telling me.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CONFUSED  (75% confidence)
   ⚡ Escalation rule   : R1_calm_majority_skip_jump (raw affect downgraded)
   Signals detected    : ['confusion_keywords', 'escalation:R1_calm_majority_skip_jump']
@@ -173,7 +173,7 @@
   UCB scores          : [2.38, 99.00, 99.00, 99.00, 99.00, 99.00, 1.68]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -185,9 +185,9 @@
 
 👴 Elderly user : I don't understand. Say it more simply please.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : FRUSTRATED  (100% confidence)
   Signals detected    : ['confusion_keywords']
   Sentiment score     : +0.377   Repetition score: 0.000
@@ -199,7 +199,7 @@
   🔧  Config updated  (affect_frustrated_detected)
      pace                         normal     →  slow
                                   ↳  ELARA will speak slower and more gently
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -209,9 +209,9 @@
 
 👴 Elderly user : I already told you about the tablet! Why do you keep asking me the same thing?
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : FRUSTRATED  (100% confidence)
   Signals detected    : ['confusion_keywords']
   Sentiment score     : +0.000   Repetition score: 0.000
@@ -221,7 +221,7 @@
   UCB scores          : [2.41, 2.20, 2.20, 2.20, 2.20, 2.20, 2.20]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -232,9 +232,9 @@
 
 👴 Elderly user : Nothing you say is helping me. I don't understand any of it.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : FRUSTRATED  (100% confidence)
   Signals detected    : ['confusion_keywords']
   Sentiment score     : +0.296   Repetition score: 0.118
@@ -244,7 +244,7 @@
   UCB scores          : [1.73, 2.21, 2.21, 2.21, 2.21, 2.21, 2.21]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -254,9 +254,9 @@
 
 👴 Elderly user : I already asked this. You never remember what I tell you.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : FRUSTRATED  (100% confidence)
   Signals detected    : ['confusion_keywords']
   Sentiment score     : +0.000   Repetition score: 0.104
@@ -266,7 +266,7 @@
   UCB scores          : [1.73, 1.42, 2.22, 2.22, 2.22, 2.22, 2.22]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -276,9 +276,9 @@
 
 👴 Elderly user : This is too complicated. I just want a simple answer.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CONFUSED  (40% confidence)
   Signals detected    : ['confusion_keywords']
   Sentiment score     : +0.077   Repetition score: 0.057
@@ -288,7 +288,7 @@
   UCB scores          : [3.73, 1.73, 2.43, 2.43, 3.73, 99.00, 2.43]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -296,9 +296,9 @@
 
 👴 Elderly user : I already told you! The white tablet and the blue tablet. Every morning!
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CONFUSED  (60% confidence)
   Signals detected    : ['confusion_keywords']
   Sentiment score     : +0.000   Repetition score: 0.000
@@ -308,7 +308,7 @@
   UCB scores          : [3.73, 1.73, 2.43, 2.43, 3.73, 2.43, 2.43]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -319,9 +319,9 @@
 
 👴 Elderly user : You are making me very upset. Nothing is working.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CONFUSED  (60% confidence)
   Signals detected    : ['sentiment', 'confusion_keywords']
   Sentiment score     : -0.439   Repetition score: 0.044
@@ -333,7 +333,7 @@
   🔧  Config updated  (affect_confused_detected)
      patience_mode                False      →  True
                                   ↳  ELARA opens every reply with emotional acknowledgement
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -343,9 +343,9 @@
 
 👴 Elderly user : Fine. Let's start over. Just tell me what I should do right now.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.202   Repetition score: 0.051
@@ -357,7 +357,7 @@
   🔧  Config updated  (calm_recovery_step)
      patience_mode                True       →  False
                                   ↳  ELARA uses standard warm tone
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -367,9 +367,9 @@
 
 👴 Elderly user : Okay that makes more sense. Thank you for being patient with me.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.569   Repetition score: 0.044
@@ -381,7 +381,7 @@
   🔧  Config updated  (calm_recovery_step)
      confirmation_frequency       medium     →  low
                                   ↳  ELARA answers directly
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -391,9 +391,9 @@
 
 👴 Elderly user : My knee is hurting a little today. Is that something to worry about?
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : SAD  (48% confidence)
   Signals detected    : ['sentiment']
   Sentiment score     : -0.681   Repetition score: 0.041
@@ -405,7 +405,7 @@
   🔧  Config updated  (affect_sad_detected)
      patience_mode                False      →  True
                                   ↳  ELARA opens every reply with emotional acknowledgement
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -415,9 +415,9 @@
 
 👴 Elderly user : I feel a bit lonely today. My daughter hasn't called in a while.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : SAD  (60% confidence)
   Signals detected    : ['sentiment', 'sadness_keywords']
   Sentiment score     : -0.361   Repetition score: 0.093
@@ -427,7 +427,7 @@
   UCB scores          : [2.57, -99.00, -99.00, -99.00, 2.20, -99.00, -99.00]
 
   ✓   No config change needed  (no_change_needed_or_already_at_limit)
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -438,9 +438,9 @@
 
 👴 Elderly user : Can you tell me a short happy story? Something to cheer me up.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.791   Repetition score: 0.000
@@ -452,7 +452,7 @@
   🔧  Config updated  (calm_recovery_step)
      patience_mode                True       →  False
                                   ↳  ELARA uses standard warm tone
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
@@ -463,9 +463,9 @@
 
 👴 Elderly user : That was lovely. I think I'll rest now. Goodnight ELARA.
   ⏳ ELARA is thinking…
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   🧠  Learning Agent  —  ELARA Adaptation
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
   Elderly user affect : CALM  (100% confidence)
   Signals detected    : ['none']
   Sentiment score     : +0.586   Repetition score: 0.000
@@ -477,7 +477,7 @@
   🔧  Config updated  (calm_recovery_step)
      clarity_level                1          →  2
                                   ↳  ELARA uses friendly, gentle language
-──────────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────
 
 
 🤖 ELARA :
