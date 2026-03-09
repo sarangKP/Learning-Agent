@@ -29,7 +29,7 @@ uvicorn main:app --reload --port 8000
 # Terminal 2 — Ollama (if not already running)
 ollama serve
 
-# Terminal 3 — ELARA Conversation Agent (you chat as the user)
+# Terminal 3 — Conversation Agent (you chat as the user)
 python ollama_agent.py --model llama3.2:3b
 
 # 5. Run tests
@@ -49,19 +49,19 @@ learning_agent/
 ├── bandit.py           ← Layer 3: UCB1 contextual bandit
 ├── config_applier.py   ← Maps action_id → config delta (step-clamped)
 ├── storage.py          ← File-based N/Q table persistence (swap for Redis)
-├── ollama_agent.py     ← ELARA Conversation Agent powered by Ollama LLM
+├── ollama_agent.py     ← Conversation Agent powered by Ollama LLM
 ├── tests.py            ← pytest test suite (45 tests)
 └── tables/             ← Auto-created; stores bandit_N.npy + bandit_Q.npy
 ```
 
 ---
 
-## ELARA Conversation Agent
+## Conversation Agent
 
-`ollama_agent.py` is the primary entry point. It runs a real LLM (via Ollama)
-as ELARA, an empathetic elderly companion robot. The Learning Agent analyses
-the conversation **every turn** and updates ELARA's behaviour config live —
-those changes are injected directly into the LLM system prompt so ELARA's
+`ollama_agent.py` is the primary entry point. It runs a real LLM (via Ollama),
+an empathetic elderly companion robot. The Learning Agent analyses
+the conversation **every turn** and updates behaviour config live —
+those changes are injected directly into the LLM system prompt so
 tone, pace, and language change between replies.
 
 ```bash
@@ -81,7 +81,7 @@ python ollama_agent.py --no-service
 **In-session commands:**
 ```
 /config    — show the live config right now
-/prompt    — show the exact system prompt ELARA is using
+/prompt    — show the exact system prompt Conversation Agent is using
 /history   — show all learning-agent calls and what changed (includes ctx= and affect_window)
 /quit      — exit with session summary
 ```
@@ -97,16 +97,16 @@ ollama pull tinyllama       # lightest, ~600MB (may ignore prompt instructions)
 
 ---
 
-## How Config Affects ELARA
+## How Config Affects Conversation Agent
 
 The Learning Agent updates 4 config parameters. Each is translated into
 concrete instructions injected into the LLM system prompt:
 
-| Parameter | Values | Effect on ELARA |
+| Parameter | Values | Effect on Conv Agent |
 |---|---|---|
 | `pace` | slow / normal / fast | Controls reply length and token budget (slow=280, normal=160, fast=70 tokens) |
 | `clarity_level` | 1 / 2 / 3 | 1 = simplest words, one idea per sentence; 3 = more detail allowed |
-| `confirmation_frequency` | low / medium / high | high = ELARA always repeats back what it understood before answering |
+| `confirmation_frequency` | low / medium / high | high = Conv Agent always repeats back what it understood before answering |
 | `patience_mode` | true / false | true = every reply opens with a warm empathetic acknowledgement |
 
 **Default config** (session start):
@@ -127,7 +127,7 @@ concrete instructions injected into the LLM system prompt:
 User message
      │
      ▼
-ollama_agent.py  (ELARAAgent)
+ollama_agent.py  (Conversation Agent)
      │  every turn
      ├──────────────────────────► POST /analyse
      │                                 │
@@ -142,7 +142,7 @@ ollama_agent.py  (ELARAAgent)
      │          │                      │
      │          │  Layer 2: Classifier │
      │          │    affect + ctx_id   │
-     │          │    escalation smoother│
+     │          │   escalation smoother│
      │          │                      │
      │          │  Layer 3: UCB Bandit │
      │          │    update Q/N tables │
@@ -154,7 +154,7 @@ ollama_agent.py  (ELARAAgent)
      │  apply changes to self.config
      │  rebuild system prompt
      ▼
-Ollama LLM  (ELARA replies with updated behaviour)
+Ollama LLM  (Conversation agent replies with updated behaviour)
 ```
 
 ---
@@ -372,7 +372,7 @@ Pydantic v2             Request/response validation
 vaderSentiment          Sentiment analysis (Layer 1)
 scikit-learn            TF-IDF + cosine similarity (Layer 1)
 numpy                   Bandit N/Q tables (Layer 3)
-Ollama                  Local LLM inference for ELARA
+Ollama                  Local LLM inference for Conversation Agent
 requests                HTTP client (ollama_agent → service)
 pytest                  Test suite (45 tests)
 ```
