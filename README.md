@@ -43,14 +43,14 @@ pytest tests.py -v
 ```
 learning_agent/
 ├── main.py             ← FastAPI app + reward computation
-├── schemas.py          ← Pydantic v2 request/response models
+├── schemas.py          ← Pydantic v2 request/response models (input validation)
 ├── nlp_layer.py        ← Layer 1: VADER sentiment + TF-IDF repetition + keyword detectors
 ├── state_classifier.py ← Layer 2: Rule-based affect classifier + escalation smoother + context encoder
 ├── bandit.py           ← Layer 3: Discounted UCB1 contextual bandit (γ=0.99)
 ├── config_applier.py   ← Maps action_id → config delta (step-clamped)
-├── storage.py          ← File-based N/Q table persistence (swap for Redis)
+├── storage.py          ← File-based N/Q table persistence (swap for Redis in production)
 ├── ollama_agent.py     ← ELARA Conversation Agent powered by Ollama LLM
-├── tests.py            ← pytest test suite (45 tests)
+├── tests.py            ← pytest test suite (47 tests)
 └── tables/             ← Auto-created; stores bandit_N.npy + bandit_Q.npy
 ```
 
@@ -82,7 +82,7 @@ python ollama_agent.py --no-service
 ```
 /config    — show the live config right now
 /prompt    — show the exact system prompt ELARA is using
-/history   — show all learning-agent calls and what changed (includes ctx= and affect_window)
+/history   — show all learning-agent calls and what changed
 /quit      — exit with session summary
 ```
 
@@ -142,13 +142,14 @@ ollama_agent.py  (ELARAAgent)
      │          │                      │
      │          │  Layer 2: Classifier │
      │          │    affect + ctx_id   │
-     │          │   escalation smoother│
+     │          │    escalation smoother│
      │          │                      │
      │          │  Layer 3: UCB Bandit │
      │          │    update Q/N tables │
      │          │    select action     │
-     │          └──────────────────────┤
-     │                                 │
+     └──────────┤                      │
+                └──────────────────────┤
+                                       │
      ◄─────────────────────────── config_delta
      │
      │  apply changes to self.config
@@ -174,56 +175,51 @@ none of the above                                            →  calm
 ### Escalation Smoother
 
 After raw classification, a rolling window of the last 5 affect states is
-checked before `frustrated` is allowed to stand. This prevents single-turn
-skip-level jumps (e.g. calm → frustrated in one message).
+checked before high-impact affects are allowed to stand. This prevents
+single-turn misclassifications from triggering aggressive config changes.
 
-**Rules (checked in order):**
+**Frustrated rules** (checked in order):
 
-| Rule | Condition | Result |
+| Rule | Condition | Action |
 |---|---|---|
-| R3 all_calm_history | Every entry in the window is calm | frustrated → confused (always, even with all signals firing) |
-| R1 insufficient_streak | Trailing non-calm streak < 2 | frustrated → confused (unless all 3 signals fired simultaneously) |
+| R3 `all_calm_history` | Every window entry is calm | Downgrade frustrated → confused (always, even with strong signals) |
+| R1 `insufficient_streak` | Trailing non-calm streak < 2 | Downgrade frustrated → confused (bypassed if all 3 signals fire simultaneously) |
 
-```
-["calm","calm","calm","calm","confused"] → streak=1 → downgrade
-["calm","calm","calm","confused","confused"] → streak=2 → frustrated allowed
-["calm","confused","calm","calm","confused"] → streak=1 (calm resets) → downgrade
-```
+**Disengaged rule:**
 
-### Context ID Encoding
+| Rule | Condition | Action |
+|---|---|---|
+| R4 `calm_history_not_disengaged` | All window entries calm AND raw affect is disengaged | Downgrade disengaged → calm |
 
-```
-affect_idx (0–4) × 9  +  clarity_idx (0–2) × 3  +  pace_idx (0–2)
-→ 0..44  (45 unique contexts)
+R4 prevents brief acknowledgements like "Yes." or "Okay." from being
+misclassified as disengagement after a calm conversation. A genuinely
+disengaged user will show a *pattern* of short messages across multiple turns,
+not a single short message after calm history.
 
-Affect index:  0=frustrated  1=confused  2=sad  3=calm  4=disengaged
-```
+Rules are **additive dampeners only** — they never upgrade an affect.
 
 ---
 
-## Actions
+## Input Validation
 
-| ID | Name | Effect |
-|---|---|---|
-| 0 | DO_NOTHING | No change. When affect=calm, nudges config one step back toward defaults. |
-| 1 | DECREASE_CLARITY | clarity_level − 1 |
-| 2 | DECREASE_PACE | pace one step slower |
-| 3 | INCREASE_CONFIRMATION | confirmation_frequency + 1 |
-| 4 | ENABLE_PATIENCE | patience_mode = true |
-| 5 | DECREASE_CLARITY_AND_PACE | clarity − 1, pace slower |
-| 6 | CLARITY_AND_CONFIRMATION | clarity − 1, confirmation + 1 |
+Validation is applied at two layers to catch malformed requests early:
 
-**Bandit guards (override UCB):**
-- `calm` context → always returns action 0 (DO_NOTHING), never changes config on a happy user
-- `sad` context → restricted to actions {0, 4} only (empathy, no clarity/pace changes)
-- Cold start (no visits for this context) → rule-based default for the affect
-- Otherwise → Discounted UCB1 selects the best learned action
+**Layer 1 — API boundary (`schemas.py`):**
+- `conversation_window.turns` is capped at 50 entries (returns 422 if exceeded)
+- `affect_window` entries must be one of: `frustrated`, `confused`, `sad`, `calm`, `disengaged` (returns 422 on unknown values)
+- `previous_affect` is similarly validated
+- `affect_window` is capped at 5 entries (matches `WINDOW_SIZE`)
 
-**Discounted UCB1 — how it learns without degrading:**
+**Layer 2 — Classifier (`state_classifier.py`):**
+- Any unknown affect strings that slip through are stripped with a warning log before the escalation smoother uses the window
 
-The bandit uses a decay factor γ (GAMMA = 0.99) on every update so recent
-interactions gradually outweigh old ones. This prevents the tables from
-becoming stale if the user's needs shift over weeks or months.
+---
+
+## Bandit — Discounted UCB1
+
+The bandit learns which config action works best for each context (affect × clarity × pace combination).
+Discounting (γ=0.99) prevents the tables from becoming stale as the user's
+needs shift over weeks or months.
 
 ```
 N[ctx][action] = γ × N[ctx][action] + 1
@@ -236,7 +232,7 @@ score = Q[ctx][action] + sqrt(2 × log(total) / N[ctx][action])
           ↑ exploitation              ↑ exploration bonus
 ```
 
-Tuning γ per deployment:
+**Tuning γ per deployment:**
 ```
 Single user, stable needs        → 0.999  (forgets very slowly)
 Single user, changing needs      → 0.99   (default)
@@ -251,6 +247,8 @@ sad        → 4 (ENABLE_PATIENCE)
 calm       → 0 (DO_NOTHING)
 disengaged → 4 (ENABLE_PATIENCE)
 ```
+
+**Context space:** 45 contexts (5 affects × 3 clarity levels × 3 pace values) × 7 actions
 
 ---
 
@@ -280,6 +278,12 @@ The bandit learns from how affect transitions between consecutive calls:
 ---
 
 ## API Reference
+
+### GET /health
+
+```json
+{ "status": "ok" }
+```
 
 ### POST /analyse
 
@@ -312,95 +316,91 @@ The bandit learns from how affect transitions between consecutive calls:
 > `affect_window`, `previous_affect`, `previous_action_id`, and `previous_context_id`
 > are all `null` on the first turn of a session.
 
+> `affect_window` must contain only valid affect strings. Invalid values return HTTP 422.
+
 **Response:**
 ```json
 {
   "schema_version": "1.0",
   "session_id": "elara-1234567890",
-  "processing_time_ms": 42,
+  "processing_time_ms": 4,
   "inferred_state": {
-    "affect": "frustrated",
-    "confidence": 0.84,
-    "context_id": 14,
-    "signals_used": ["sentiment", "repetition"],
+    "affect": "confused",
+    "confidence": 0.72,
+    "context_id": 10,
+    "signals_used": ["confusion_keywords"],
     "escalation_rule_applied": null
   },
   "config_delta": {
     "apply": true,
-    "changes": { "clarity_level": 1, "pace": "slow" },
-    "reason": "affect_frustrated_detected"
+    "changes": { "clarity_level": 1 },
+    "reason": "affect_confused_detected"
   },
-  "bandit_context": { "context_id": 14, "action_id": 5 },
+  "bandit_context": {
+    "context_id": 10,
+    "action_id": 6
+  },
   "diagnostics": {
-    "sentiment_score": -0.61,
-    "repetition_score": 0.71,
-    "confusion_score": 0.0,
+    "sentiment_score": -0.1,
+    "repetition_score": 0.12,
+    "confusion_score": 0.8,
     "sadness_score": 0.0,
-    "ucb_scores": [0.1, 0.4, 0.6, 0.3, 0.5, 0.7, 0.2],
+    "ucb_scores": [1.2, 0.8, 0.9, 0.7, 1.1, 0.6, 99.0],
     "reward_applied": -0.3,
-    "total_tries": 8
+    "total_tries": 12
   }
 }
 ```
 
-### GET /health
-```json
-{ "status": "ok" }
-```
+**Action IDs:**
+
+| ID | Name | Effect |
+|---|---|---|
+| 0 | DO_NOTHING | No change (calm: gradual recovery toward defaults) |
+| 1 | DECREASE_CLARITY | clarity_level − 1 step |
+| 2 | DECREASE_PACE | pace − 1 step |
+| 3 | INCREASE_CONFIRMATION | confirmation_frequency + 1 step |
+| 4 | ENABLE_PATIENCE | patience_mode → true |
+| 5 | DECREASE_CLARITY_AND_PACE | clarity_level − 1 and pace − 1 |
+| 6 | CLARITY_AND_CONFIRMATION | clarity_level − 1 and confirmation_frequency + 1 |
 
 ---
 
-## Storage
+## Caller Contract
 
-N and Q tables persist across sessions as numpy files:
-```
-tables/bandit_N.npy   ← decayed weight sums  (45 × 7, float)
-tables/bandit_Q.npy   ← avg rewards          (45 × 7, float)
-```
+The service is **stateless** — the caller (ollama_agent.py) owns all session
+state and echoes it back on every request.
 
-> **Note:** Because Discounted UCB is active, `N` values are decayed floats
-> (e.g. `8.73`, `3.21`) — not raw integer visit counts. Do not interpret them
-> as "this action was tried exactly N times."
+**Required fields to echo back each turn:**
+- `affect_window` — append the previous `inferred_state.affect` to your local list (keep last 5)
+- `previous_affect` — the `inferred_state.affect` from the last response
+- `previous_action_id` — the `bandit_context.action_id` from the last response
+- `previous_context_id` — the `bandit_context.context_id` from the last response
 
-> If you have existing tables from a previous version of this service (36 × 7 shape),
-> they will be detected on load and automatically re-initialised with a warning.
-> Delete `tables/` and restart to begin fresh.
+This allows the bandit to correctly attribute rewards to the context and action
+that were actually active when the response was generated.
 
-**Reset tables** (start fresh):
+---
+
+## Known Limitations
+
+- **Single-user concurrency:** The file-based table persistence (`tables/bandit_N.npy`, `tables/bandit_Q.npy`) is not concurrency-safe across multiple simultaneous sessions. For multi-user deployment, replace the storage backend with Redis (stub already present in `storage.py`).
+- **Text-only affect signals:** The NLP pipeline operates on text alone. Multimodal signals (speech rate, tone of voice) would improve affect classification accuracy, particularly for the `disengaged` and `sad` states.
+- **Context space sparsity:** With 45 contexts and a single user, many context cells will rarely be visited. The UCB exploration bonus ensures these are sampled eventually, but convergence is slow for infrequently-visited contexts.
+
+---
+
+## Development
+
 ```bash
-rm -rf tables/
+# Run full test suite
+pytest tests.py -v
+
+# Run a specific test class
+pytest tests.py::TestStateClassifier -v
+
+# Check service is up
+curl http://localhost:8000/health
 ```
 
-**Swap to Redis for production** — in `storage.py`:
-```python
-import redis, pickle
-from state_classifier import N_CONTEXTS
-_r = redis.Redis()
-N_ACTIONS = 7
-
-def load_tables():
-    raw_N = _r.get("bandit:N")
-    raw_Q = _r.get("bandit:Q")
-    if raw_N and raw_Q:
-        return pickle.loads(raw_N), pickle.loads(raw_Q)
-    return np.zeros((N_CONTEXTS, N_ACTIONS)), np.zeros((N_CONTEXTS, N_ACTIONS))
-
-def save_tables(N, Q):
-    _r.set("bandit:N", pickle.dumps(N))
-    _r.set("bandit:Q", pickle.dumps(Q))
-```
-
----
-
-## Tech Stack
-
-```
-FastAPI + uvicorn       API server
-Pydantic v2             Request/response validation
-vaderSentiment          Sentiment analysis (Layer 1)
-scikit-learn            TF-IDF + cosine similarity (Layer 1)
-numpy                   Bandit N/Q tables (Layer 3)
-Ollama                  Local LLM inference for ELARA
-requests                HTTP client (ollama_agent → service)
-pytest                  Test suite (45 tests)
-```
+**Test suite covers:** NLP signals, state classification, escalation rules (R1/R3/R4), context encoding, bandit cold-start and update logic, config applier transitions, and full request/response integration.

@@ -42,6 +42,20 @@ class TestNLPLayer:
         _, r, _, _ = extract_signals(turns)
         assert r > 0.9
 
+    def test_escalation_R4_calm_history_suppresses_disengaged(self):
+        # R4: short message after all-calm history → brevity, not disengagement
+        window = ["calm", "calm", "calm", "calm"]
+        affect, _, _, rule = classify_state(0.0, 0.0, last_user_text="ok", affect_window=window)
+        assert affect == "calm"
+        assert rule == "R4_calm_history_not_disengaged"
+
+    def test_escalation_R4_not_triggered_with_noncalm_history(self):
+        # R4 only fires on all-calm history — mixed history → disengaged stands
+        window = ["calm", "calm", "disengaged", "calm"]
+        affect, _, _, rule = classify_state(0.0, 0.0, last_user_text="ok", affect_window=window)
+        assert affect == "disengaged"
+        assert rule is None
+        
     def test_repetition_low(self):
         turns = _turns("Hello there", "The weather is nice today")
         _, r, _, _ = extract_signals(turns)
