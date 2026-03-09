@@ -3,7 +3,7 @@
 A stateless FastAPI microservice that monitors conversations between the Conversation Agent
 and an elderly user, detects emotional affect (frustrated / confused / sad / calm / disengaged),
 and recommends live config adjustments to the Conversation Agent using
-NLP + a Contextual Bandit (UCB1).
+NLP + a Contextual Bandit (Discounted UCB1, γ=0.99).
 
 ---
 
@@ -29,7 +29,7 @@ uvicorn main:app --reload --port 8000
 # Terminal 2 — Ollama (if not already running)
 ollama serve
 
-# Terminal 3 — Conversation Agent (you chat as the user)
+# Terminal 3 — ELARA Conversation Agent (you chat as the user)
 python ollama_agent.py --model llama3.2:3b
 
 # 5. Run tests
@@ -46,22 +46,22 @@ learning_agent/
 ├── schemas.py          ← Pydantic v2 request/response models
 ├── nlp_layer.py        ← Layer 1: VADER sentiment + TF-IDF repetition + keyword detectors
 ├── state_classifier.py ← Layer 2: Rule-based affect classifier + escalation smoother + context encoder
-├── bandit.py           ← Layer 3: UCB1 contextual bandit
+├── bandit.py           ← Layer 3: Discounted UCB1 contextual bandit (γ=0.99)
 ├── config_applier.py   ← Maps action_id → config delta (step-clamped)
 ├── storage.py          ← File-based N/Q table persistence (swap for Redis)
-├── ollama_agent.py     ← Conversation Agent powered by Ollama LLM
+├── ollama_agent.py     ← ELARA Conversation Agent powered by Ollama LLM
 ├── tests.py            ← pytest test suite (45 tests)
 └── tables/             ← Auto-created; stores bandit_N.npy + bandit_Q.npy
 ```
 
 ---
 
-## Conversation Agent
+## ELARA Conversation Agent
 
-`ollama_agent.py` is the primary entry point. It runs a real LLM (via Ollama),
-an empathetic elderly companion robot. The Learning Agent analyses
-the conversation **every turn** and updates behaviour config live —
-those changes are injected directly into the LLM system prompt so
+`ollama_agent.py` is the primary entry point. It runs a real LLM (via Ollama)
+as ELARA, an empathetic elderly companion robot. The Learning Agent analyses
+the conversation **every turn** and updates ELARA's behaviour config live —
+those changes are injected directly into the LLM system prompt so ELARA's
 tone, pace, and language change between replies.
 
 ```bash
@@ -81,7 +81,7 @@ python ollama_agent.py --no-service
 **In-session commands:**
 ```
 /config    — show the live config right now
-/prompt    — show the exact system prompt Conversation Agent is using
+/prompt    — show the exact system prompt ELARA is using
 /history   — show all learning-agent calls and what changed (includes ctx= and affect_window)
 /quit      — exit with session summary
 ```
@@ -97,16 +97,16 @@ ollama pull tinyllama       # lightest, ~600MB (may ignore prompt instructions)
 
 ---
 
-## How Config Affects Conversation Agent
+## How Config Affects ELARA
 
 The Learning Agent updates 4 config parameters. Each is translated into
 concrete instructions injected into the LLM system prompt:
 
-| Parameter | Values | Effect on Conv Agent |
+| Parameter | Values | Effect on ELARA |
 |---|---|---|
 | `pace` | slow / normal / fast | Controls reply length and token budget (slow=280, normal=160, fast=70 tokens) |
 | `clarity_level` | 1 / 2 / 3 | 1 = simplest words, one idea per sentence; 3 = more detail allowed |
-| `confirmation_frequency` | low / medium / high | high = Conv Agent always repeats back what it understood before answering |
+| `confirmation_frequency` | low / medium / high | high = ELARA always repeats back what it understood before answering |
 | `patience_mode` | true / false | true = every reply opens with a warm empathetic acknowledgement |
 
 **Default config** (session start):
@@ -127,7 +127,7 @@ concrete instructions injected into the LLM system prompt:
 User message
      │
      ▼
-ollama_agent.py  (Conversation Agent)
+ollama_agent.py  (ELARAAgent)
      │  every turn
      ├──────────────────────────► POST /analyse
      │                                 │
@@ -154,7 +154,7 @@ ollama_agent.py  (Conversation Agent)
      │  apply changes to self.config
      │  rebuild system prompt
      ▼
-Ollama LLM  (Conversation agent replies with updated behaviour)
+Ollama LLM  (ELARA replies with updated behaviour)
 ```
 
 ---
@@ -217,7 +217,31 @@ Affect index:  0=frustrated  1=confused  2=sad  3=calm  4=disengaged
 - `calm` context → always returns action 0 (DO_NOTHING), never changes config on a happy user
 - `sad` context → restricted to actions {0, 4} only (empathy, no clarity/pace changes)
 - Cold start (no visits for this context) → rule-based default for the affect
-- Otherwise → UCB1 selects the best learned action
+- Otherwise → Discounted UCB1 selects the best learned action
+
+**Discounted UCB1 — how it learns without degrading:**
+
+The bandit uses a decay factor γ (GAMMA = 0.99) on every update so recent
+interactions gradually outweigh old ones. This prevents the tables from
+becoming stale if the user's needs shift over weeks or months.
+
+```
+N[ctx][action] = γ × N[ctx][action] + 1
+Q[ctx][action] = γ × Q[ctx][action] + (1 − γ) × reward
+```
+
+UCB score per action (balances exploitation vs exploration):
+```
+score = Q[ctx][action] + sqrt(2 × log(total) / N[ctx][action])
+          ↑ exploitation              ↑ exploration bonus
+```
+
+Tuning γ per deployment:
+```
+Single user, stable needs        → 0.999  (forgets very slowly)
+Single user, changing needs      → 0.99   (default)
+Small care facility (~10 users)  → 0.95   (adapts faster)
+```
 
 **Rule-based cold-start defaults:**
 ```
@@ -330,9 +354,13 @@ The bandit learns from how affect transitions between consecutive calls:
 
 N and Q tables persist across sessions as numpy files:
 ```
-tables/bandit_N.npy   ← visit counts  (45 × 7)
-tables/bandit_Q.npy   ← avg rewards   (45 × 7)
+tables/bandit_N.npy   ← decayed weight sums  (45 × 7, float)
+tables/bandit_Q.npy   ← avg rewards          (45 × 7, float)
 ```
+
+> **Note:** Because Discounted UCB is active, `N` values are decayed floats
+> (e.g. `8.73`, `3.21`) — not raw integer visit counts. Do not interpret them
+> as "this action was tried exactly N times."
 
 > If you have existing tables from a previous version of this service (36 × 7 shape),
 > they will be detected on load and automatically re-initialised with a warning.
@@ -372,7 +400,7 @@ Pydantic v2             Request/response validation
 vaderSentiment          Sentiment analysis (Layer 1)
 scikit-learn            TF-IDF + cosine similarity (Layer 1)
 numpy                   Bandit N/Q tables (Layer 3)
-Ollama                  Local LLM inference for Conversation Agent
+Ollama                  Local LLM inference for ELARA
 requests                HTTP client (ollama_agent → service)
 pytest                  Test suite (45 tests)
 ```
