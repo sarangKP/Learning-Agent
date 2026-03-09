@@ -223,51 +223,33 @@ def apply_escalation_rules(
     affect_window: Optional[List[str]],
     all_signals_fired: bool,
 ) -> Tuple[str, float, Optional[str]]:
-    """
-    Inspect the rolling affect window and downgrade raw_affect if the
-    evidence doesn't justify a sudden jump.
 
-    Returns (final_affect, final_conf, rule_name_or_None).
-
-    Handles two affect types:
-      - "frustrated": the highest-impact affect (aggressive config changes)
-      - "disengaged": FIX — can false-positive on brief-but-calm messages
-
-    all_signals_fired: True when sentiment + repetition + confusion keywords
-    all crossed their thresholds simultaneously. Bypasses R1 for frustrated.
-    """
-    if not affect_window or raw_affect != "frustrated":
-        # ADD THIS: also guard disengaged
-        if raw_affect == "disengaged" and affect_window:
-            window = affect_window[-WINDOW_SIZE:]
-            if all(a == "calm" for a in window):
-                return "calm", raw_conf * 0.9, "R4_calm_history_not_disengaged"
+    if not affect_window:
         return raw_affect, raw_conf, None
 
     window = affect_window[-WINDOW_SIZE:]
+
+    # ── R4: disengaged after all-calm history → brevity, not disengagement ──
+    if raw_affect == "disengaged":
+        if all(a == "calm" for a in window):
+            return "calm", raw_conf * 0.9, "R4_calm_history_not_disengaged"
+        return raw_affect, raw_conf, None
+
+    # ── Frustrated rules ────────────────────────────────────────────────────
+    if raw_affect != "frustrated":
+        return raw_affect, raw_conf, None
+
     non_calm_count = sum(1 for a in window if a != "calm")
-    all_calm = non_calm_count == 0
 
-    # ── Frustrated rules ─────────────────────────────────────────
-    if raw_affect == "frustrated":
-        # R3: history is entirely calm → frustrated not allowed
-        if all_calm:
-            return "confused", raw_conf * 0.8, "R3_all_calm_history"
+    # R3: entirely calm history → frustrated not allowed
+    if non_calm_count == 0:
+        return "confused", raw_conf * 0.8, "R3_all_calm_history"
 
-        # R1: insufficient trailing non-calm streak
-        streak = _trailing_noncalm_streak(window)
-        if streak < MIN_NONCALM_STREAK and not all_signals_fired:
-            return "confused", raw_conf * 0.75, "R1_insufficient_streak"
+    # R1: insufficient trailing streak
+    streak = _trailing_noncalm_streak(window)
+    if streak < MIN_NONCALM_STREAK and not all_signals_fired:
+        return "confused", raw_conf * 0.75, "R1_insufficient_streak"
 
-    # ── Disengaged rule ──────────────────────────────────────────
-    # FIX R4: a single short message after an entirely calm history is almost
-    # certainly brevity, not genuine disengagement. Suppress it so the bandit
-    # doesn't learn spurious disengaged-context associations.
-    elif raw_affect == "disengaged":
-        if all_calm:
-            return "calm", raw_conf * 0.7, "R4_disengaged_calm_history"
-
-    # All rules passed — affect stands
     return raw_affect, raw_conf, None
 
 
