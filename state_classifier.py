@@ -27,29 +27,52 @@ The core principle: affect should escalate gradually.
   calm → frustrated               ✗  (skip-level jump — needs very strong evidence)
 
 Rules (checked in order, first match wins):
-  R3  all_calm_history
-      If every entry in the window is calm, frustrated is downgraded to
-      confused regardless of signal strength. The user cannot jump from
-      entirely calm history to genuine frustration in one message.
 
-  R1  insufficient_streak
-      Frustrated is only allowed to stand if the window ends with at least
-      MIN_NONCALM_STREAK (2) consecutive non-calm entries. A single non-calm
-      turn before frustrated is always suppressed; two or more consecutive
-      non-calm turns means the escalation is genuine and earned.
-      This replaces the old ratio-based check and makes R2 redundant:
-      a last_affect of calm means streak=0 < 2, so R1 already catches it.
+  Frustrated rules:
+    R3  all_calm_history
+        If every entry in the window is calm, frustrated is downgraded to
+        confused regardless of signal strength.
+
+    R1  insufficient_streak
+        Frustrated is only allowed to stand if the window ends with at least
+        MIN_NONCALM_STREAK (2) consecutive non-calm entries. A single non-calm
+        turn is always suppressed; two or more consecutive non-calm turns means
+        the escalation is genuine and earned.
+        all_signals_fired bypasses this so genuine multi-signal frustration
+        can still escalate even from a short streak.
+
+  Disengaged rule:
+    R4  disengaged_calm_history
+        FIX: disengaged can fire on any very short message (≤3 words) even
+        after an entirely calm history — e.g. "Yes." or "Okay." said by a
+        user who is simply being brief. This false positive then trains the
+        bandit on a spurious disengaged state.
+        If the window is entirely calm and the raw affect is disengaged,
+        downgrade to calm. A genuinely disengaged user will show a pattern
+        of short messages across multiple turns; a single short message
+        after calm history is more likely brevity than disengagement.
 
 These rules are additive dampeners — they never upgrade an affect, only
 downgrade it. The full multi-signal frustrated path (negative + repetition +
 strong keywords) bypasses R1 so genuine sustained frustration is still caught.
+
+── affect_window validation ──────────────────────────────────────────────────
+FIX: the escalation smoother trusted the caller to send valid affect strings.
+A malformed window (typo, wrong length, stale data) silently produced
+incorrect escalation decisions because unknown strings would never match
+"calm", making the all-calm guard unreliable.
+Now any unrecognised entry is stripped with a warning before the window is
+used. The original list is never mutated.
 
 N_CONTEXTS is exported here as the single source of truth.
 bandit.py and storage.py import from here to avoid definition drift.
 """
 
 from __future__ import annotations
+import logging
 from typing import Tuple, List, Optional
+
+log = logging.getLogger(__name__)
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 SENTIMENT_THRESHOLD   = -0.2
@@ -71,24 +94,44 @@ PACE_MAP    = {"slow": 0, "normal": 1, "fast": 2}
 N_CONTEXTS = 45   # 5 affects × 9 (3 clarity × 3 pace)
 N_ACTIONS  = 7
 
+_VALID_AFFECTS = frozenset(AFFECT_MAP.keys())
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def classify_state(
     sentiment: float,
     repetition: float,
     confusion: float = 0.0,
     sadness: float   = 0.0,
-    last_user_text: str = "",      # optional: enables disengaged detection
-    affect_window: Optional[List[str]] = None,  # rolling history from caller
+    last_user_text: str = "",
+    affect_window: Optional[List[str]] = None,
 ) -> Tuple[str, float, List[str], Optional[str]]:
     """
     Returns (affect, confidence, signals_used, escalation_rule_applied).
 
     escalation_rule_applied is None when no rule fired, or a short string
-    describing which rule downgraded the raw affect — useful for the
-    diagnostics panel and tests.
+    describing which rule downgraded the raw affect.
 
     Extra args default to 0.0 / "" / None for backward compatibility.
     """
+    # FIX: validate and sanitise the affect_window before use.
+    # Unknown strings are stripped with a warning so a stale or malformed
+    # window never silently corrupts escalation decisions.
+    clean_window: Optional[List[str]] = None
+    if affect_window is not None:
+        clean_window = []
+        for entry in affect_window:
+            if entry in _VALID_AFFECTS:
+                clean_window.append(entry)
+            else:
+                log.warning(
+                    "[state_classifier] Unknown affect '%s' in affect_window — "
+                    "ignored. Valid values: %s",
+                    entry,
+                    sorted(_VALID_AFFECTS),
+                )
+
     negative    = sentiment  < SENTIMENT_THRESHOLD
     repetitive  = repetition > REPETITION_THRESHOLD
     confused_kw = confusion  > CONFUSION_THRESHOLD
@@ -101,10 +144,6 @@ def classify_state(
     if sad_kw:      signals_used.append("sadness_keywords")
 
     # ── 1. frustrated ────────────────────────────────────────────
-    # Triggered by EITHER:
-    #   a) strong negative signal + repetition (classic frustration arc)
-    #   b) very high confusion keyword score alone (e.g. "making me very upset",
-    #      "you never remember", "already told you" compound to >0.8)
     strong_neg   = negative or confusion > 0.65
     high_conf_kw = confusion > 0.8
     if (strong_neg and repetitive) or (high_conf_kw and (negative or repetitive or confusion > 0.9)):
@@ -165,12 +204,10 @@ def classify_state(
         signals_used = []
 
     # ── Escalation smoother ──────────────────────────────────────
-    # Apply after raw classification. Only fires when affect_window is
-    # provided and the raw affect is "frustrated" (the highest-impact state).
     affect, conf, escalation_rule = apply_escalation_rules(
         raw_affect=affect,
         raw_conf=conf,
-        affect_window=affect_window,
+        affect_window=clean_window,
         all_signals_fired=(negative and repetitive and confused_kw),
     )
 
@@ -192,73 +229,74 @@ def apply_escalation_rules(
 
     Returns (final_affect, final_conf, rule_name_or_None).
 
-    Only acts on "frustrated" — the highest-impact affect that triggers the
-    most aggressive config changes. Calm/confused/sad/disengaged are left
-    unchanged because their downstream actions are gentler.
+    Handles two affect types:
+      - "frustrated": the highest-impact affect (aggressive config changes)
+      - "disengaged": FIX — can false-positive on brief-but-calm messages
 
     all_signals_fired: True when sentiment + repetition + confusion keywords
-    all crossed their thresholds simultaneously. This bypasses R1 so genuine
-    multi-signal frustration can still escalate even from a short streak.
+    all crossed their thresholds simultaneously. Bypasses R1 for frustrated.
     """
-    # Nothing to check if no window or affect is not frustrated
-    if not affect_window or raw_affect != "frustrated":
+    if not affect_window:
         return raw_affect, raw_conf, None
 
-    window = affect_window[-WINDOW_SIZE:]   # use at most last WINDOW_SIZE entries
-
+    window = affect_window[-WINDOW_SIZE:]
     non_calm_count = sum(1 for a in window if a != "calm")
+    all_calm = non_calm_count == 0
 
-    # ── R3: history is entirely calm → frustrated not allowed ────
-    # Strictest rule — checked first.
-    # Even all_signals_fired doesn't override this: if every prior reading
-    # was calm, one message is never reliable evidence of frustration.
-    if non_calm_count == 0:
-        return "confused", raw_conf * 0.8, "R3_all_calm_history"
+    # ── Frustrated rules ─────────────────────────────────────────
+    if raw_affect == "frustrated":
+        # R3: history is entirely calm → frustrated not allowed
+        if all_calm:
+            return "confused", raw_conf * 0.8, "R3_all_calm_history"
 
-    # ── R1: insufficient trailing streak ─────────────────────────
-    # Count how many consecutive non-calm entries END the window.
-    # ["calm","calm","calm","confused","confused"] → streak = 2  ✓ frustrated ok
-    # ["calm","calm","calm","calm","confused"]     → streak = 1  ✗ downgrade
-    # ["calm","confused","calm","calm","confused"] → streak = 1  ✗ downgrade
-    #   (the calm in position -2 resets the streak)
-    #
-    # all_signals_fired bypasses this: negative + repetition + confusion
-    # keywords all firing together is strong enough to allow frustrated
-    # even with a streak of 1.
-    streak = _trailing_noncalm_streak(window)
-    if streak < MIN_NONCALM_STREAK and not all_signals_fired:
-        return "confused", raw_conf * 0.75, "R1_insufficient_streak"
+        # R1: insufficient trailing non-calm streak
+        streak = _trailing_noncalm_streak(window)
+        if streak < MIN_NONCALM_STREAK and not all_signals_fired:
+            return "confused", raw_conf * 0.75, "R1_insufficient_streak"
 
-    # All rules passed — frustrated stands
+    # ── Disengaged rule ──────────────────────────────────────────
+    # FIX R4: a single short message after an entirely calm history is almost
+    # certainly brevity, not genuine disengagement. Suppress it so the bandit
+    # doesn't learn spurious disengaged-context associations.
+    elif raw_affect == "disengaged":
+        if all_calm:
+            return "calm", raw_conf * 0.7, "R4_disengaged_calm_history"
+
+    # All rules passed — affect stands
     return raw_affect, raw_conf, None
 
 
-def _trailing_noncalm_streak(window: List[str]) -> int:
-    """
-    Count how many consecutive non-calm entries END the window.
-    e.g. ["calm","confused","confused"] → 2
-         ["calm","confused","calm"]     → 0  (calm resets the streak)
-    """
-    streak = 0
-    for affect in reversed(window):
-        if affect == "calm":
-            break
-        streak += 1
-    return streak
-
+# ── Context encoder ───────────────────────────────────────────────────────────
 
 def encode_context_id(affect: str, clarity_level: int, pace: str) -> int:
-    """Encodes a (affect, clarity, pace) triple into a 0-44 integer."""
-    a = AFFECT_MAP.get(affect, 3)   # default to calm
+    """
+    Maps (affect, clarity_level, pace) to a unique integer in [0, N_CONTEXTS).
+
+    Encoding:
+        affect_idx (0-4) × 9  +  clarity_idx (0-2) × 3  +  pace_idx (0-2)
+    """
+    a = AFFECT_MAP.get(affect, AFFECT_MAP["calm"])
     c = CLARITY_MAP.get(clarity_level, 1)
     p = PACE_MAP.get(pace, 1)
     return a * 9 + c * 3 + p
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _trailing_noncalm_streak(window: List[str]) -> int:
+    """Count how many consecutive non-calm entries END the window."""
+    streak = 0
+    for entry in reversed(window):
+        if entry != "calm":
+            streak += 1
+        else:
+            break
+    return streak
+
 
 def _blend(a: float, b: float) -> float:
     return _clamp((a + b) / 2.0)
+
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 1.0) -> float:
     return max(lo, min(hi, v))

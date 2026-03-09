@@ -1,55 +1,49 @@
 """
-Layer 1 — NLP Signal Extraction
+Layer 1 — NLP Signal Extractor
 
-Outputs:
-  sentiment_score  : float  -1.0 to +1.0   (VADER compound on last user message)
-  repetition_score : float   0.0 to  1.0   (TF-IDF cosine sim between last two user msgs)
-  confusion_score  : float   0.0 to  1.0   (cognitive confusion keyword detector)
-  sadness_score    : float   0.0 to  1.0   (loneliness / sadness keyword detector)
+Outputs four signals per call:
+  sentiment_score  : VADER compound score of the latest user turn  (-1 to +1)
+  repetition_score : TF-IDF cosine similarity between the two most
+                     recent user turns  (0 to 1)
+  confusion_score  : weighted keyword match against confusion patterns (0 to 1)
+  sadness_score    : weighted keyword match against sadness patterns   (0 to 1)
 
-Why four signals?
-  VADER misses polite elderly phrasing. "I don't understand" and "I feel
-  lonely" both score near zero on VADER. Keyword detectors catch them directly
-  and prevent misclassification (e.g. loneliness being labelled as confusion).
+No LLM is used — all operations are sub-millisecond on CPU.
 """
 
 from __future__ import annotations
-from typing import List, Tuple
+import logging
 import re
+from typing import Tuple
 
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+log = logging.getLogger(__name__)
+
 _analyser = SentimentIntensityAnalyzer()
 
-# ── Confusion / frustration keyword patterns ─────────────────────────────────
+# ── Keyword pattern tables ────────────────────────────────────────────────────
+
 _CONFUSION_PATTERNS = [
-    # Direct confusion
-    (r"\bdon'?t understand\b",                      0.7),
+    (r"\bdon'?t understand\b",                      0.8),
+    (r"\bwhat do you mean\b",                       0.6),
+    (r"\bconfus(ed|ing)\b",                         0.7),
+    (r"\bi'?m lost\b",                              0.7),
     (r"\bcan'?t follow\b",                          0.7),
-    (r"\bnot making sense\b",                       0.7),
-    (r"\bconfus(ed|ing)\b",                         0.6),
-    (r"\bsay (it |that )?(again|once more|slowly)\b", 0.5),
-    (r"\bmore simply\b",                            0.6),
-    (r"\bsimpler\b",                                0.5),
-    (r"\bwhat do you mean\b",                       0.5),
-    (r"\bi don'?t (get|follow|know what)\b",        0.6),
-    (r"\btoo complicated\b",                        0.7),
-    (r"\bnothing (you say|helps|works|is helping)\b", 0.7),
-    (r"\bhard to (understand|follow)\b",            0.6),
-    (r"\bwhat (are you|did you) (say|mean|talking)\b", 0.5),
-    # Frustration / repetition complaint
-    (r"\balready (told|asked|said)\b",              0.8),
-    (r"\byou never (remember|listen)\b",            0.8),
-    (r"\bstop (repeating|saying)\b",                0.7),
-    (r"\bkeep (asking|saying|repeating)\b",         0.7),
-    (r"\bmaking me (upset|angry|frustrated)\b",     0.9),
-    (r"\bvery upset\b",                             0.8),
+    (r"\btoo complicated\b",                        0.8),
+    (r"\bmakes no sense\b",                         0.8),
+    (r"\byou'?re? (not making|making no) sense\b",  0.8),
+    (r"\bwhat are you (saying|talking about)\b",    0.7),
+    (r"\byou keep (asking|saying|repeating)\b",     0.7),
+    (r"\balready told you\b",                       0.8),
+    (r"\byou never remember\b",                     0.8),
+    (r"\bsame thing\b",                             0.5),
+    (r"\bnot helping\b",                            0.6),
+    (r"\bnothing (is )?working\b",                  0.6),
 ]
 
-# ── Sadness / loneliness keyword patterns ─────────────────────────────────────
-# These are SEPARATE from confusion — sadness needs empathy, not clarity changes.
 _SADNESS_PATTERNS = [
     (r"\blon(ely|eliness)\b",                       0.8),
     (r"\bmiss(ing)? (my|him|her|them|you)\b",       0.7),
@@ -103,7 +97,21 @@ def extract_signals(turns: list) -> Tuple[float, float, float, float]:
             vec = TfidfVectorizer(min_df=1, stop_words=None)
             tfidf = vec.fit_transform([user_texts[-2], user_texts[-1]])
             repetition_score = float(cosine_similarity(tfidf[0:1], tfidf[1:2])[0][0])
-        except ValueError:
+        except ValueError as exc:
+            # FIX: this path fires when TF-IDF has no usable tokens — e.g. the
+            # user sent only stopwords, punctuation, or single characters.
+            # Previously this was silently swallowed, meaning a message like
+            # "I don't know" (all stopwords) would produce repetition_score=0.0
+            # with no indication that the signal was lost.
+            # Now we log at WARNING so the diagnostic panel can surface it.
+            log.warning(
+                "[nlp_layer] TF-IDF vectorisation failed (no usable tokens "
+                "in one or both messages) — repetition_score set to 0.0. "
+                "Messages: %r / %r. Error: %s",
+                user_texts[-2][:60],
+                user_texts[-1][:60],
+                exc,
+            )
             repetition_score = 0.0
     else:
         repetition_score = 0.0
