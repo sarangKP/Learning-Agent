@@ -1,7 +1,6 @@
-# ELARA — Learning Agent Microservice
+# Learning Agent Microservice
 
-Part of the **ELARA (Elderly Life-Assistive Robotic Agent)** cloud brain.
-A stateless FastAPI microservice that monitors conversations between ELARA
+A stateless FastAPI microservice that monitors conversations between Conversation Agent
 and an elderly user, detects affect (frustrated / confused / calm), and
 recommends live config adjustments to the Conversation Agent using
 NLP + a Contextual Bandit (UCB1).
