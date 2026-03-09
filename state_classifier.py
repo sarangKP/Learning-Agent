@@ -236,7 +236,12 @@ def apply_escalation_rules(
     all_signals_fired: True when sentiment + repetition + confusion keywords
     all crossed their thresholds simultaneously. Bypasses R1 for frustrated.
     """
-    if not affect_window:
+    if not affect_window or raw_affect != "frustrated":
+        # ADD THIS: also guard disengaged
+        if raw_affect == "disengaged" and affect_window:
+            window = affect_window[-WINDOW_SIZE:]
+            if all(a == "calm" for a in window):
+                return "calm", raw_conf * 0.9, "R4_calm_history_not_disengaged"
         return raw_affect, raw_conf, None
 
     window = affect_window[-WINDOW_SIZE:]
