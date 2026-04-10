@@ -10,3 +10,5 @@ __pycache__/
 __pycache__/*
 
 tables/
+ollama_agent.py/
+LEARNING_AGENT_INTEGRATION.md/
