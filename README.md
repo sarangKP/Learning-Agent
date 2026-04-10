@@ -1,9 +1,14 @@
-# Learning Agent Microservice
+# ELARA Learning Agent Microservice
 
-A stateless FastAPI microservice that monitors conversations between the Conversation Agent
-and an elderly user, detects emotional affect (frustrated / confused / sad / calm / disengaged),
-and recommends live config adjustments to the Conversation Agent using
-NLP + a Contextual Bandit (Discounted UCB1, γ=0.99).
+A stateless FastAPI microservice that monitors conversations between ELARA and an elderly user,
+detects emotional affect (frustrated / confused / sad / calm / disengaged), and recommends live
+config adjustments using NLP + a **Contextual Bandit (Discounted LinUCB, γ=0.95)**.
+
+> **v1.1 — LinUCB Edition.**  
+> The bandit has been upgraded from tabular Discounted UCB1 to a **Linear Upper Confidence Bound
+> (LinUCB)** model. Instead of a fixed 45-context lookup table, LinUCB learns a linear reward
+> model over a 7-dimensional feature vector, giving it the ability to generalise across unseen
+> state combinations from the very first session.
 
 ---
 
@@ -19,7 +24,7 @@ pip install -r requirements.txt
 
 # 3. Pull an Ollama model (first time only)
 ollama pull llama3.2:3b        # recommended
-# or: ollama pull tinyllama    # lighter, ~600MB
+# or: ollama pull tinyllama    # lighter, ~600 MB
 
 # 4. Start everything (3 terminals)
 
@@ -42,27 +47,27 @@ pytest tests.py -v
 
 ```
 learning_agent/
-├── main.py             ← FastAPI app + reward computation
-├── schemas.py          ← Pydantic v2 request/response models (input validation)
+├── main.py             ← FastAPI app + reward computation (LinUCB edition)
+├── schemas.py          ← Pydantic v2 request/response models; now includes previous_config
 ├── nlp_layer.py        ← Layer 1: VADER sentiment + TF-IDF repetition + keyword detectors
-├── state_classifier.py ← Layer 2: Rule-based affect classifier + escalation smoother + context encoder
-├── bandit.py           ← Layer 3: Discounted UCB1 contextual bandit (γ=0.99)
+├── state_classifier.py ← Layer 2: Rule-based affect classifier + escalation smoother
+│                           + context encoder + feature vector encoder (encode_context_features)
+├── bandit.py           ← Layer 3: Discounted LinUCB bandit (γ=0.95)
 ├── config_applier.py   ← Maps action_id → config delta (step-clamped)
-├── storage.py          ← File-based N/Q table persistence (swap for Redis in production)
+├── storage.py          ← File-based A/b matrix persistence (swap for Redis in production)
 ├── ollama_agent.py     ← ELARA Conversation Agent powered by Ollama LLM
-├── tests.py            ← pytest test suite (47 tests)
-└── tables/             ← Auto-created; stores bandit_N.npy + bandit_Q.npy
+├── tests.py            ← pytest test suite
+└── tables/             ← Auto-created; stores bandit_A.npy + bandit_b.npy
 ```
 
 ---
 
 ## ELARA Conversation Agent
 
-`ollama_agent.py` is the primary entry point. It runs a real LLM (via Ollama)
-as ELARA, an empathetic elderly companion robot. The Learning Agent analyses
-the conversation **every turn** and updates ELARA's behaviour config live —
-those changes are injected directly into the LLM system prompt so ELARA's
-tone, pace, and language change between replies.
+`ollama_agent.py` is the primary entry point. It runs a real LLM (via Ollama) as ELARA, an
+empathetic elderly companion robot. The Learning Agent analyses the conversation **every turn**
+and updates ELARA's behaviour config live — those changes are injected directly into the LLM
+system prompt so ELARA's tone, pace, and language adapt between replies.
 
 ```bash
 # Interactive — you act as the elderly user
@@ -79,6 +84,7 @@ python ollama_agent.py --no-service
 ```
 
 **In-session commands:**
+
 ```
 /config    — show the live config right now
 /prompt    — show the exact system prompt ELARA is using
@@ -87,20 +93,21 @@ python ollama_agent.py --no-service
 ```
 
 **Recommended models (pull before use):**
+
 ```bash
 ollama pull llama3.2:3b     # best overall for conversation following
 ollama pull gemma2:2b       # excellent instruction following
 ollama pull phi3:mini       # fast, good quality
 ollama pull qwen2.5:3b      # good multilingual support
-ollama pull tinyllama       # lightest, ~600MB (may ignore prompt instructions)
+ollama pull tinyllama       # lightest, ~600 MB (may ignore prompt instructions)
 ```
 
 ---
 
 ## How Config Affects ELARA
 
-The Learning Agent updates 4 config parameters. Each is translated into
-concrete instructions injected into the LLM system prompt:
+The Learning Agent updates 4 config parameters. Each is translated into concrete instructions
+injected into the LLM system prompt:
 
 | Parameter | Values | Effect on ELARA |
 |---|---|---|
@@ -110,6 +117,7 @@ concrete instructions injected into the LLM system prompt:
 | `patience_mode` | true / false | true = every reply opens with a warm empathetic acknowledgement |
 
 **Default config** (session start):
+
 ```json
 {
   "pace": "normal",
@@ -143,9 +151,11 @@ ollama_agent.py  (ELARAAgent)
      │          │  Layer 2: Classifier │
      │          │    affect + ctx_id   │
      │          │    escalation smoother│
+     │          │    feature vector    │
+     │          │    (7D for LinUCB)   │
      │          │                      │
-     │          │  Layer 3: UCB Bandit │
-     │          │    update Q/N tables │
+     │          │  Layer 3: LinUCB     │
+     │          │    update A/b mats   │
      │          │    select action     │
      └──────────┤                      │
                 └──────────────────────┤
@@ -174,9 +184,9 @@ none of the above                                            →  calm
 
 ### Escalation Smoother
 
-After raw classification, a rolling window of the last 5 affect states is
-checked before high-impact affects are allowed to stand. This prevents
-single-turn misclassifications from triggering aggressive config changes.
+After raw classification, a rolling window of the last 5 affect states is checked before
+high-impact affects are allowed to stand. This prevents single-turn misclassifications from
+triggering aggressive config changes.
 
 **Frustrated rules** (checked in order):
 
@@ -191,64 +201,103 @@ single-turn misclassifications from triggering aggressive config changes.
 |---|---|---|
 | R4 `calm_history_not_disengaged` | All window entries calm AND raw affect is disengaged | Downgrade disengaged → calm |
 
-R4 prevents brief acknowledgements like "Yes." or "Okay." from being
-misclassified as disengagement after a calm conversation. A genuinely
-disengaged user will show a *pattern* of short messages across multiple turns,
-not a single short message after calm history.
+R4 prevents brief acknowledgements like "Yes." or "Okay." from being misclassified as
+disengagement after a calm conversation. A genuinely disengaged user will show a *pattern* of
+short messages across multiple turns, not a single short message after calm history.
 
 Rules are **additive dampeners only** — they never upgrade an affect.
 
 ---
 
-## Input Validation
+## Bandit — Discounted LinUCB
 
-Validation is applied at two layers to catch malformed requests early:
+### Why LinUCB?
 
-**Layer 1 — API boundary (`schemas.py`):**
-- `conversation_window.turns` is capped at 50 entries (returns 422 if exceeded)
-- `affect_window` entries must be one of: `frustrated`, `confused`, `sad`, `calm`, `disengaged` (returns 422 on unknown values)
-- `previous_affect` is similarly validated
-- `affect_window` is capped at 5 entries (matches `WINDOW_SIZE`)
+The previous UCB1 bandit used a 45 × 7 lookup table (45 contexts × 7 actions). Every new
+context cell started cold and had to be visited independently before it could learn anything
+useful. LinUCB replaces this with a **linear reward model**: it learns a weight vector `θ` per
+action that maps a feature vector to an expected reward. This means it can generalise — a
+pattern learned in a "confused + slow pace" context immediately informs estimates in related
+contexts like "confused + normal pace".
 
-**Layer 2 — Classifier (`state_classifier.py`):**
-- Any unknown affect strings that slip through are stripped with a warning log before the escalation smoother uses the window
+### Feature Vector (7 dimensions)
+
+Each state is encoded as a 7-dimensional vector before being passed to the bandit:
+
+```
+[  One-Hot Affect (5D)  |  clarity_level (1D)  |  pace_value (1D)  ]
+
+Affect one-hot: frustrated=0, confused=1, sad=2, calm=3, disengaged=4
+clarity_level:  passed as-is (1, 2, or 3)
+pace_value:     slow=0.0, normal=1.0, fast=2.0
+```
+
+### LinUCB Update & Selection
+
+One pair of matrices is maintained **per action** (7 action pairs total):
+
+```
+A[a]  — (7×7) covariance matrix, initialised to I (identity)
+b[a]  — (7×1) reward-weighted feature vector, initialised to 0
+```
+
+**Update** (after observing reward r for action a with feature x):
+
+```
+A[a] = γ · A[a] + (1 − γ) · I + x · xᵀ     ← discount + new observation
+b[a] = γ · b[a] + r · x                      ← decay old, add new
+```
+
+The `(1 − γ) · I` term keeps `A[a]` invertible even after heavy discounting.
+
+**Selection** (Thompson / UCB style — pick highest score):
+
+```
+θ[a]  = A[a]⁻¹ · b[a]                        ← ridge regression coefficients
+score = θ[a]ᵀ · x  +  α · √(xᵀ · A[a]⁻¹ · x)
+         ↑ exploitation           ↑ exploration bonus (α = 0.8)
+```
+
+### Tuning Parameters
+
+| Parameter | Default | Effect |
+|---|---|---|
+| `alpha` | 0.8 | Exploration strength. Higher = more exploratory early on. |
+| `gamma` | 0.95 | Discount factor. Lower = forgets old data faster. |
+
+```
+Single user, stable needs        → gamma=0.999, alpha=0.5
+Single user, changing needs      → gamma=0.95,  alpha=0.8  (default)
+Small care facility (~10 users)  → gamma=0.90,  alpha=1.0
+```
+
+### Persistent Storage
+
+Matrices are stored as NumPy arrays in the `tables/` directory:
+
+```
+tables/bandit_A.npy   — shape (7, 7, 7): one 7×7 covariance matrix per action
+tables/bandit_b.npy   — shape (7, 7):    one 7D reward vector per action
+```
+
+Both files are replaced atomically on every request using a two-layer lock (threading.Lock +
+fcntl.flock) to prevent race conditions under concurrent workers.
 
 ---
 
-## Bandit — Discounted UCB1
+## Input Validation
 
-The bandit learns which config action works best for each context (affect × clarity × pace combination).
-Discounting (γ=0.99) prevents the tables from becoming stale as the user's
-needs shift over weeks or months.
+Validation is applied at two layers to catch malformed requests early.
 
-```
-N[ctx][action] = γ × N[ctx][action] + 1
-Q[ctx][action] = γ × Q[ctx][action] + (1 − γ) × reward
-```
+**Layer 1 — API boundary (`schemas.py`):**
+- `conversation_window.turns` capped at 50 entries (returns 422 if exceeded)
+- `affect_window` entries must be one of: `frustrated`, `confused`, `sad`, `calm`, `disengaged` (returns 422 on unknown values)
+- `previous_affect` validated the same way
+- `affect_window` capped at 5 entries (matches `WINDOW_SIZE`)
+- `previous_config` (new in v1.1) carries the config that was active when the previous action was taken, enabling correct LinUCB reward attribution
 
-UCB score per action (balances exploitation vs exploration):
-```
-score = Q[ctx][action] + sqrt(2 × log(total) / N[ctx][action])
-          ↑ exploitation              ↑ exploration bonus
-```
-
-**Tuning γ per deployment:**
-```
-Single user, stable needs        → 0.999  (forgets very slowly)
-Single user, changing needs      → 0.99   (default)
-Small care facility (~10 users)  → 0.95   (adapts faster)
-```
-
-**Rule-based cold-start defaults:**
-```
-frustrated → 5 (DECREASE_CLARITY_AND_PACE)
-confused   → 6 (CLARITY_AND_CONFIRMATION)
-sad        → 4 (ENABLE_PATIENCE)
-calm       → 0 (DO_NOTHING)
-disengaged → 4 (ENABLE_PATIENCE)
-```
-
-**Context space:** 45 contexts (5 affects × 3 clarity levels × 3 pace values) × 7 actions
+**Layer 2 — Classifier (`state_classifier.py`):**
+- Unknown affect strings that slip through are stripped with a warning log before the escalation smoother uses the window
 
 ---
 
@@ -259,19 +308,14 @@ The bandit learns from how affect transitions between consecutive calls:
 | Transition | Reward |
 |---|---|
 | frustrated → calm | +1.0 |
-| frustrated → sad | +0.3 |
-| frustrated → confused | +0.5 |
+| frustrated → confused | +0.3 |
 | frustrated → frustrated | −0.5 |
 | confused → calm | +1.0 |
-| confused → sad | +0.2 |
 | confused → confused | −0.3 |
 | confused → frustrated | −1.0 |
 | sad → calm | +1.0 |
 | sad → sad | −0.2 |
-| sad → confused | −0.5 |
-| sad → frustrated | −1.0 |
 | calm → calm | 0.0 |
-| calm → sad | −0.3 |
 | calm → confused | −0.5 |
 | any → disengaged | −1.0 |
 
@@ -287,10 +331,11 @@ The bandit learns from how affect transitions between consecutive calls:
 
 ### POST /analyse
 
-**Request:**
+**Request (v1.1):**
+
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "session_id": "elara-1234567890",
   "conversation_window": {
     "turns": [
@@ -307,21 +352,29 @@ The bandit learns from how affect transitions between consecutive calls:
   "affect_window": ["calm", "calm", "calm", "confused"],
   "previous_affect": "confused",
   "previous_action_id": 6,
-  "previous_context_id": 10,
-  "interaction_count": 4,
-  "user_profile_hint": "elderly"
+  "previous_config": {
+    "pace": "normal",
+    "clarity_level": 2,
+    "confirmation_frequency": "low",
+    "patience_mode": false
+  },
+  "interaction_count": 4
 }
 ```
 
-> `affect_window`, `previous_affect`, `previous_action_id`, and `previous_context_id`
-> are all `null` on the first turn of a session.
+> `affect_window`, `previous_affect`, `previous_action_id`, and `previous_config` are all
+> `null` on the first turn of a session.
 
-> `affect_window` must contain only valid affect strings. Invalid values return HTTP 422.
+> `previous_config` (new in v1.1) is the config that was active when the previous action was
+> chosen. The service uses it to reconstruct the exact feature vector for correct reward
+> attribution. Sending `current_config` here (the old behaviour) may attribute reward to the
+> wrong feature vector if the config changed between turns.
 
-**Response:**
+**Response (v1.1):**
+
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "session_id": "elara-1234567890",
   "processing_time_ms": 4,
   "inferred_state": {
@@ -345,12 +398,16 @@ The bandit learns from how affect transitions between consecutive calls:
     "repetition_score": 0.12,
     "confusion_score": 0.8,
     "sadness_score": 0.0,
-    "ucb_scores": [1.2, 0.8, 0.9, 0.7, 1.1, 0.6, 99.0],
+    "ucb_scores": [0.42, 0.31, 0.29, 0.35, 0.40, 0.28, 1.15],
     "reward_applied": -0.3,
-    "total_tries": 12
+    "total_tries": 0
   }
 }
 ```
+
+> `total_tries` is always 0 in v1.1. The LinUCB model does not maintain per-action visit
+> counts the way UCB1 did; this field is preserved in the response schema for backward
+> compatibility with existing callers.
 
 **Action IDs:**
 
@@ -368,25 +425,40 @@ The bandit learns from how affect transitions between consecutive calls:
 
 ## Caller Contract
 
-The service is **stateless** — the caller (ollama_agent.py) owns all session
-state and echoes it back on every request.
+The service is **stateless** — the caller (`ollama_agent.py`) owns all session state and echoes
+it back on every request.
 
 **Required fields to echo back each turn:**
-- `affect_window` — append the previous `inferred_state.affect` to your local list (keep last 5)
-- `previous_affect` — the `inferred_state.affect` from the last response
-- `previous_action_id` — the `bandit_context.action_id` from the last response
-- `previous_context_id` — the `bandit_context.context_id` from the last response
 
-This allows the bandit to correctly attribute rewards to the context and action
-that were actually active when the response was generated.
+| Field | Source | Purpose |
+|---|---|---|
+| `affect_window` | Append last `inferred_state.affect`; keep last 5 | Escalation smoother |
+| `previous_affect` | Last `inferred_state.affect` | Reward computation |
+| `previous_action_id` | Last `bandit_context.action_id` | Reward attribution |
+| `previous_config` | Config that was active when last action was taken | Correct LinUCB feature vector for reward update |
+
+`previous_config` is the key addition in v1.1. Because the config may change between turns
+(the service itself recommends changes), using `current_config` for reward attribution would
+reconstruct the wrong feature vector. Always send the config snapshot that was live at the
+time the previous action was selected.
+
+---
+
+## Schema Version History
+
+| Version | Changes |
+|---|---|
+| 1.0 | Initial release — tabular Discounted UCB1, 45 contexts × 7 actions |
+| 1.1 | Bandit upgraded to Discounted LinUCB; `previous_config` added to request; storage switched from `bandit_N.npy`/`bandit_Q.npy` to `bandit_A.npy`/`bandit_b.npy`; `previous_context_id` removed (feature vector replaces context ID for reward attribution) |
 
 ---
 
 ## Known Limitations
 
-- **Single-user concurrency:** The file-based table persistence (`tables/bandit_N.npy`, `tables/bandit_Q.npy`) is not concurrency-safe across multiple simultaneous sessions. For multi-user deployment, replace the storage backend with Redis (stub already present in `storage.py`).
-- **Text-only affect signals:** The NLP pipeline operates on text alone. Multimodal signals (speech rate, tone of voice) would improve affect classification accuracy, particularly for the `disengaged` and `sad` states.
-- **Context space sparsity:** With 45 contexts and a single user, many context cells will rarely be visited. The UCB exploration bonus ensures these are sampled eventually, but convergence is slow for infrequently-visited contexts.
+- **Single-user concurrency:** File-based matrix persistence is not safe across multiple simultaneous sessions. For multi-user deployment, replace the storage backend with Redis (stub present in `storage.py`).
+- **Text-only affect signals:** The NLP pipeline operates on text alone. Multimodal signals (speech rate, tone of voice) would improve classification accuracy, particularly for `disengaged` and `sad` states.
+- **Linear reward assumption:** LinUCB assumes rewards are a linear function of the feature vector. Non-linear relationships (e.g., a user who only responds well to patience at night) are not captured. A kernelised or neural bandit would handle this better at the cost of increased complexity.
+- **`total_tries` deprecated:** This field is always 0 in v1.1 and will be removed in a future version. Callers should not depend on it.
 
 ---
 
@@ -401,6 +473,9 @@ pytest tests.py::TestStateClassifier -v
 
 # Check service is up
 curl http://localhost:8000/health
+
+# Reset bandit matrices (clears all learned data)
+python -c "from storage import reset_tables; reset_tables()"
 ```
 
-**Test suite covers:** NLP signals, state classification, escalation rules (R1/R3/R4), context encoding, bandit cold-start and update logic, config applier transitions, and full request/response integration.
+**Test suite covers:** NLP signals, state classification, escalation rules (R1/R3/R4), context encoding, feature vector encoding, LinUCB update and selection logic, config applier transitions, and full request/response integration.

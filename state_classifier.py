@@ -71,6 +71,7 @@ bandit.py and storage.py import from here to avoid definition drift.
 from __future__ import annotations
 import logging
 from typing import Tuple, List, Optional
+import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -266,6 +267,28 @@ def encode_context_id(affect: str, clarity_level: int, pace: str) -> int:
     c = CLARITY_MAP.get(clarity_level, 1)
     p = PACE_MAP.get(pace, 1)
     return a * 9 + c * 3 + p
+
+
+def encode_context_features(affect: str, clarity_level: int, pace: str) -> np.ndarray:
+    """
+    Encodes state into a 7-dimensional feature vector for LinUCB.
+    Vector structure: [One-Hot Affect (5), Clarity Level (1), Pace Value (1)]
+    """
+    # 1. One-hot encode the affect (5 dimensions)
+    affect_vec = np.zeros(len(AFFECT_MAP), dtype=float)
+    idx = AFFECT_MAP.get(affect, AFFECT_MAP["calm"])
+    affect_vec[idx] = 1.0
+    
+    # 2. Numeric encoding for config (allows linear generalization)
+    # Clarity is already 1, 2, or 3
+    # Pace: slow=0.0, normal=1.0, fast=2.0
+    pace_val = float(PACE_MAP.get(pace, 1))
+    
+    return np.concatenate([
+        affect_vec, 
+        [float(clarity_level)], 
+        [pace_val]
+    ])
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

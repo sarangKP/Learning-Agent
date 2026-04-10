@@ -286,37 +286,38 @@ def check_ollama_model(model: str) -> tuple:
 
 def call_learning_service(
     session_id: str,
-    turns_window: list[dict],
+    turns_window: list,
     current_config: dict,
-    previous_affect: Optional[str],
-    previous_action_id: Optional[int],
-    previous_context_id: Optional[int],
-    affect_window: Optional[list],         # rolling affect history for escalation smoother
-    interaction_count: int,
+    previous_affect: Optional[str] = None,
+    previous_action_id: Optional[int] = None,
+    previous_context_id: Optional[int] = None,
+    previous_config: Optional[dict] = None,  # NEW: Accept the config from the last turn
+    affect_window: Optional[list] = None,
+    interaction_count: int = 0
 ) -> Optional[dict]:
+    """
+    Synchronous helper to POST the conversation state to the Learning Microservice.
+    """
+    url = "http://127.0.0.1:8000/analyse"
+    
     payload = {
-        "schema_version": "1.0",
         "session_id": session_id,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
         "conversation_window": {"turns": turns_window},
         "current_config": current_config,
         "previous_affect": previous_affect,
         "previous_action_id": previous_action_id,
         "previous_context_id": previous_context_id,
-        "affect_window": affect_window,                # rolling history for escalation smoother
-        "interaction_count": interaction_count,
-        "user_profile_hint": "elderly",
+        "previous_config": previous_config,  # NEW: Send to backend for LinUCB update
+        "affect_window": affect_window,
+        "interaction_count": interaction_count
     }
+
     try:
-        resp = requests.post(LEARNING_SERVICE_URL, json=payload, timeout=5)
-        resp.raise_for_status()
-        return resp.json()
-    except requests.exceptions.ConnectionError:
-        print(col(f"\n  ⚠  Learning service unreachable — continuing without adaptation.", Y))
-        print(col(f"     Start it with:  uvicorn main:app --reload\n", DIM))
-        return None
+        response = requests.post(url, json=payload, timeout=5)
+        response.raise_for_status()
+        return response.json()
     except Exception as e:
-        print(col(f"\n  ⚠  Learning service error: {e}\n", Y))
+        print(f"\n[!] Learning Service Error: {e}")
         return None
 
 
@@ -431,19 +432,20 @@ class ELARAAgent:
         self.config: dict = dict(self.DEFAULT_CONFIG)
 
         # Full message history for Ollama (role: user/assistant)
-        # Capped at 14 messages (7 turns) to keep context window manageable
+        # Increased limit to 20 messages (10 turns) to improve persona stability
         self.ollama_messages: list[dict] = []
 
         # Sliding window for learning service (role: user/agent)
-        # Kept slightly larger (10 messages) to give NLP layer more signal
         self.service_window: list[dict] = []
 
         # Bandit tracking
         self.previous_affect:     Optional[str] = None
         self.previous_action_id:  Optional[int] = None
-        # FIX: store the context_id that was active when the last action was
-        # taken so the reward is attributed to the correct context in main.py
         self.previous_context_id: Optional[int] = None
+        
+        # NEW: Track the specific config active when the last action was selected
+        # This is critical for LinUCB feature reconstruction on the backend.
+        self.previous_config:     Optional[dict] = None
 
         self.user_turn_count:   int = 0
         self.interaction_count: int = 0
@@ -505,15 +507,13 @@ class ELARAAgent:
     def _run_learning_service(self):
         cfg_before = dict(self.config)
 
-        # Build rolling affect window from service_history.
-        # Sent to the learning service so the escalation smoother can
-        # check whether a sudden jump (e.g. calm → frustrated) is backed
-        # by enough historical evidence before acting on it.
+        # Build rolling affect window for escalation smoothing
         affect_window = [
             h["inferred_state"]["affect"]
-            for h in self.service_history[-5:]   # last 5 classifications
+            for h in self.service_history[-5:]
         ]
 
+        # Call service with full historical context
         resp = call_learning_service(
             session_id=self.session_id,
             turns_window=self.service_window,
@@ -521,23 +521,27 @@ class ELARAAgent:
             previous_affect=self.previous_affect,
             previous_action_id=self.previous_action_id,
             previous_context_id=self.previous_context_id,
+            previous_config=self.previous_config,  # NEW: pass active config for reward attribution
             affect_window=affect_window,
             interaction_count=self.interaction_count,
         )
+        
         if resp is None:
             return
 
+        # 1. Store the context for the NEXT turn's reward calculation
+        # Note: We capture the config BEFORE the new delta is applied
+        self.previous_affect     = resp["inferred_state"]["affect"]
+        self.previous_context_id = resp["bandit_context"]["context_id"]
+        self.previous_action_id  = resp["bandit_context"]["action_id"]
+        self.previous_config     = dict(self.config) 
+
+        # 2. Apply the new action/config changes
         delta = resp["config_delta"]
         if delta["apply"] and delta["changes"]:
             self.config.update(delta["changes"])
 
-        self.previous_affect     = resp["inferred_state"]["affect"]
-        self.previous_action_id  = resp["bandit_context"]["action_id"]
-        # FIX: store the context_id returned by the service so the next call
-        # can attribute the reward to the correct context
-        self.previous_context_id = resp["bandit_context"]["context_id"]
         self.service_history.append(resp)
-
         print_learning_panel(resp, cfg_before, self.config)
 
 

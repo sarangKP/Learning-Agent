@@ -55,93 +55,45 @@ _SAD_IDX  = AFFECT_MAP["sad"]    # 2
 
 GAMMA = 0.99  # decay factor — tune this per deployment
 
-
-class UCBBandit:
-    def __init__(self, N: np.ndarray, Q: np.ndarray):
-        assert N.shape == (N_CONTEXTS, N_ACTIONS)
-        assert Q.shape == (N_CONTEXTS, N_ACTIONS)
-        self.N = N.copy().astype(float)
-        self.Q = Q.copy().astype(float)
-
-    # ── Update ────────────────────────────────────────────────────
-
-      
-
-    def update(self, context_id: int, action_id: int, reward: float) -> None:
-        # Decay both tables before applying new reward
-        self.N[context_id][action_id] = (
-            GAMMA * self.N[context_id][action_id] + 1
-        )
-        self.Q[context_id][action_id] = (
-            GAMMA * self.Q[context_id][action_id] + (1 - GAMMA) * reward
-        )
-
-    # ── Select ────────────────────────────────────────────────────
-
-    def select_action(self, context_id: int) -> Tuple[int, List[float]]:
+class LinUCBBandit:
+    def __init__(self, A: np.ndarray, b: np.ndarray, alpha: float = 1.0, gamma: float = 0.99):
         """
-        Returns (best_action_id, ucb_scores_for_all_actions).
-
-        Decision logic:
-          1. calm context      → always DO_NOTHING (never change config on a happy user)
-          2. sad context       → restrict to SAD_ALLOWED_ACTIONS (empathy only, no
-                                 clarity/pace changes)
-          3. cold start        → rule-based default for the affect
-          4. enough data       → UCB picks the best learned action (sad: within
-                                 SAD_ALLOWED_ACTIONS only)
+        A: shape (n_actions, d, d) - Covariance matrices
+        b: shape (n_actions, d)    - Reward-weighted feature vectors
+        alpha: exploration strength (replaces the arbitrary '2' in UCB1)
+        gamma: discount factor for non-stationary users
         """
-        affect_idx = context_id // 9
-        n_ctx      = self.N[context_id]
-        total = self.N.sum()
+        self.A = A.copy()
+        self.b = b.copy()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.d = A.shape[1]
+        self.n_actions = A.shape[0]
 
-        # ── Rule 1: calm → never touch the config ─────────────────
-        if affect_idx == _CALM_IDX:
-            display = [round(float(self.Q[context_id][a]), 4) for a in range(N_ACTIONS)]
-            return 0, display   # DO_NOTHING
+    def select_action(self, x: np.ndarray) -> tuple[int, list[float]]:
+        p = np.zeros(self.n_actions)
+        x = x.reshape(-1, 1)  # Ensure column vector
+        
+        for a in range(self.n_actions):
+            # 1. Compute ridge regression coefficients: theta = A^-1 * b
+            A_inv = np.linalg.inv(self.A[a])
+            theta = A_inv @ self.b[a].reshape(-1, 1)
+            
+            # 2. Predicted reward + UCB bonus
+            # Bonus = alpha * sqrt(x.T * A_inv * x)
+            uncertainty = np.sqrt(x.T @ A_inv @ x)
+            p[a] = (theta.T @ x) + self.alpha * uncertainty
+            
+        action_id = int(np.argmax(p))
+        return action_id, p.flatten().tolist()
 
-        # ── Rule 2: sad → empathy-only actions ────────────────────
-        if affect_idx == _SAD_IDX:
-            # Cold start for sad context
-            if n_ctx.sum() == 0:
-                action_id = RULE_BASED_DEFAULTS[_SAD_IDX]  # ENABLE_PATIENCE
-                display   = [0.0] * N_ACTIONS
-                display[action_id] = 1.0
-                return action_id, display
-
-            # UCB restricted to SAD_ALLOWED_ACTIONS
-            ucb_scores = []
-            for a in range(N_ACTIONS):
-                if a not in SAD_ALLOWED_ACTIONS:
-                    ucb_scores.append(-float("inf"))   # never selected
-                elif n_ctx[a] == 0:
-                    ucb_scores.append(float("inf"))    # force exploration
-                else:
-                    exploration = math.sqrt(2.0 * math.log(total + 1) / n_ctx[a])
-                    ucb_scores.append(self.Q[context_id][a] + exploration)
-
-            action_id = int(np.argmax(ucb_scores))
-            display   = [
-                s if s not in (float("inf"), -float("inf")) else (99.0 if s > 0 else -99.0)
-                for s in ucb_scores
-            ]
-            return action_id, display
-
-        # ── Rule 3: cold start for this context ───────────────────
-        if n_ctx.sum() == 0:
-            action_id = RULE_BASED_DEFAULTS.get(affect_idx, 0)
-            display   = [0.0] * N_ACTIONS
-            display[action_id] = 1.0
-            return action_id, display
-
-        # ── Rule 4: UCB with exploration ──────────────────────────
-        ucb_scores = []
-        for a in range(N_ACTIONS):
-            if n_ctx[a] == 0:
-                ucb_scores.append(float("inf"))
-            else:
-                exploration = math.sqrt(2.0 * math.log(total + 1) / n_ctx[a])
-                ucb_scores.append(self.Q[context_id][a] + exploration)
-
-        action_id = int(np.argmax(ucb_scores))
-        display   = [s if s != float("inf") else 99.0 for s in ucb_scores]
-        return action_id, display
+    def update(self, x: np.ndarray, action_id: int, reward: float):
+        x = x.reshape(-1, 1)
+        # Apply discount factor to existing knowledge (forgetting)
+        # We add (1-gamma)*I back to A to ensure it stays invertible
+        self.A[action_id] = self.gamma * self.A[action_id] + (1 - self.gamma) * np.eye(self.d)
+        self.b[action_id] = self.gamma * self.b[action_id]
+        
+        # Add new observation
+        self.A[action_id] += x @ x.T
+        self.b[action_id] += (reward * x).flatten()
